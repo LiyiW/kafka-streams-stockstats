@@ -22,6 +22,7 @@ import org.apache.kafka.streams.kstream.Windowed;
 import org.apache.kafka.streams.kstream.WindowedSerdes;
 import org.apache.kafka.streams.state.WindowStore;
 
+import java.time.Duration;
 import java.util.Properties;
 
 /**
@@ -65,12 +66,12 @@ public class StockStatsExample {
 
         KStream<Windowed<String>, TradeStats> stats = source
                 .groupByKey()
-                .windowedBy(TimeWindows.of(5000).advanceBy(1000))
-                .<TradeStats>aggregate(() -> new TradeStats(),(k, v, tradestats) -> tradestats.add(v),
+                .windowedBy(TimeWindows.of(Duration.ofMillis(5000)).advanceBy(Duration.ofMillis(1000)))
+                .<TradeStats>aggregate(TradeStats::new,(k, v, tradeStats) -> tradeStats.add(v),
                         Materialized.<String, TradeStats, WindowStore<Bytes, byte[]>>as("trade-aggregates")
                                 .withValueSerde(new TradeStatsSerde()))
                 .toStream()
-                .mapValues((trade) -> trade.computeAvgPrice());
+                .mapValues(TradeStats::computeAvgPrice);
 
         stats.to("stockstats-output", Produced.keySerde(WindowedSerdes.timeWindowedSerdeFrom(String.class)));
 
