@@ -53,6 +53,13 @@ import java.util.Properties;
  *       <-- KSTREAM-MAPVALUES-0000000003
  *
  * @formatter:on
+ *
+ * 线程 stockstat-2-aa8b033d-1d47-4190-b402-f537867f9f0d-StreamThread-1
+ * kafka consumer poll， 塞入Task Queue
+ * 从Task Queue取出head任务， process，
+ *
+ * TimeWindowedKStream 处理方式，底层用了TimestampedWindowStore， 用了RocksDBWindowStore？， 底层用了Segments，底层用了TreeMap<Long, ? extends Segment>
+ *
  */
 public class StockStatsExample {
 
@@ -90,16 +97,17 @@ public class StockStatsExample {
 
         KStream<String, Trade> source = builder.stream(Constants.STOCK_TOPIC);
 
-        KStream<Windowed<String>, TradeStats> stats = source
-                .groupByKey()
-                .windowedBy(TimeWindows.of(Duration.ofMillis(5000)).advanceBy(Duration.ofMillis(1000)))
+        KStream<Windowed<String>, TradeStats> stats = source // KStream
+                .groupByKey() // KStream -> KGroupStream
+                .windowedBy(TimeWindows.of(Duration.ofMillis(5000)).advanceBy(Duration.ofMillis(1000))) // KGroupStream -> TimeWindowedKStream
                 .<TradeStats>aggregate(TradeStats::new, (k, v, tradeStats) -> tradeStats.add(v),
                         Materialized.<String, TradeStats, WindowStore<Bytes, byte[]>>as("trade-aggregates")
-                                .withValueSerde(new TradeStatsSerde()))
-                .toStream()
-                .mapValues(TradeStats::computeAvgPrice);
+                                .withValueSerde(new TradeStatsSerde()))  // TimeWindowedKStream -> KTable
+                .toStream() // KTable -> KStream
+                .mapValues(TradeStats::computeAvgPrice); // KStream -> KStream
 
-        // 产出是对的，一般都是1s发一个，每个是5s的结果聚合，但有例外
+        // 产出是对的，一般都是1s发一个，每个是5s的结果聚合，但有例外，4个，3个结果集合
+        // 例外的原因是：producer（stocks topic）先停，然后每个窗口保有的消息数逐步减少
         stats.to("stockstats-output", Produced.keySerde(WindowedSerdes.timeWindowedSerdeFrom(String.class)));
 
         Topology topology = builder.build();
