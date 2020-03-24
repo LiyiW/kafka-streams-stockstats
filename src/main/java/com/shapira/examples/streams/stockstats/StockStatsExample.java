@@ -29,17 +29,43 @@ import java.util.Properties;
  * Input is a stream of trades
  * Output is two streams: One with minimum and avg "ASK" price for every 10 seconds window
  * Another with the top-3 stocks with lowest minimum ask every minute
+ *
+ * @formatter:off
+ *
+ * Topologies:
+ *    Sub-topology: 0
+ *     Source: KSTREAM-SOURCE-0000000000 (topics: [stocks])
+ *       --> KSTREAM-AGGREGATE-0000000001
+ *
+ *     Processor: KSTREAM-AGGREGATE-0000000001 (stores: [trade-aggregates])
+ *       <-- KSTREAM-SOURCE-0000000000
+ *       --> KTABLE-TOSTREAM-0000000002
+ *
+ *     Processor: KTABLE-TOSTREAM-0000000002 (stores: [])
+ *       <-- KSTREAM-AGGREGATE-0000000001
+ *       --> KSTREAM-MAPVALUES-0000000003
+ *
+ *     Processor: KSTREAM-MAPVALUES-0000000003 (stores: [])
+ *       <-- KTABLE-TOSTREAM-0000000002
+ *       --> KSTREAM-SINK-0000000004
+ *
+ *     Sink: KSTREAM-SINK-0000000004 (topic: stockstats-output)
+ *       <-- KSTREAM-MAPVALUES-0000000003
+ *
+ * @formatter:on
  */
 public class StockStatsExample {
 
     public static void main(String[] args) throws Exception {
 
-        Properties props;
-        if (args.length==1)
-            props = LoadConfigs.loadConfig(args[0]);
-        else
-            props = LoadConfigs.loadConfig();
+//        Properties props;
+//        if (args.length==1)
+//            props = LoadConfigs.loadConfig(args[0]);
+//        else
+//            props = LoadConfigs.loadConfig();
 
+        Properties props = new Properties();
+        props.put("bootstrap.servers",Constants.BROKER);
         props.put(StreamsConfig.APPLICATION_ID_CONFIG, "stockstat-2");
         props.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
         props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, TradeSerde.class.getName());
@@ -67,19 +93,20 @@ public class StockStatsExample {
         KStream<Windowed<String>, TradeStats> stats = source
                 .groupByKey()
                 .windowedBy(TimeWindows.of(Duration.ofMillis(5000)).advanceBy(Duration.ofMillis(1000)))
-                .<TradeStats>aggregate(TradeStats::new,(k, v, tradeStats) -> tradeStats.add(v),
+                .<TradeStats>aggregate(TradeStats::new, (k, v, tradeStats) -> tradeStats.add(v),
                         Materialized.<String, TradeStats, WindowStore<Bytes, byte[]>>as("trade-aggregates")
                                 .withValueSerde(new TradeStatsSerde()))
                 .toStream()
                 .mapValues(TradeStats::computeAvgPrice);
 
+        // 产出是对的，一般都是1s发一个，每个是5s的结果聚合，但有例外
         stats.to("stockstats-output", Produced.keySerde(WindowedSerdes.timeWindowedSerdeFrom(String.class)));
 
         Topology topology = builder.build();
 
         KafkaStreams streams = new KafkaStreams(topology, props);
 
-        System.out.println(topology.describe());
+        System.out.println("show topology:\n"+ topology.describe());
 
         streams.cleanUp();
 
